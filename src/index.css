@@ -19,34 +19,66 @@
   --font-mono: 'JetBrains Mono', monospace;
 }
 
-* {
-  box-sizing: border-box;
+/* ── Base ── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  height: 100%;
+  /* Use dvh for correct height on mobile (accounts for browser chrome) */
+  height: 100dvh;
 }
 
 html, body, #root {
-  height: 100%;
   margin: 0;
   padding: 0;
 }
 
 body {
+  height: 100%;
   background: #0a0a0a;
   color: #e8e8e8;
   font-family: 'Inter', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  /* Smooth scrolling on iOS */
+  -webkit-overflow-scrolling: touch;
+  overflow-x: hidden;
 }
 
-/* Scrollbar */
-::-webkit-scrollbar { width: 6px; height: 6px; }
+#root { height: 100%; }
+
+/* ── Prevent iOS input zoom (must be min 16px) ── */
+input, select, textarea {
+  font-size: max(16px, 0.875rem);
+}
+
+/* ── Minimum tap target size (Apple HIG: 44pt) ── */
+button, a[role="button"] {
+  min-height: 44px;
+  touch-action: manipulation;
+}
+
+/* ── Safe area insets for notch/home bar ── */
+.app-shell {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* On mobile the main area needs bottom padding for the tab bar */
+@media (max-width: 767px) {
+  .mobile-main {
+    padding-bottom: calc(60px + env(safe-area-inset-bottom));
+  }
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #3a3a3a; }
 
-/* Drag cursor for kanban */
-.kanban-card { cursor: grab; }
+/* ── Animations ── */
+.kanban-card { cursor: grab; touch-action: none; }
 .kanban-card:active { cursor: grabbing; }
 
-/* Swipe card animation helpers */
 .card-swipe-left {
   transition: transform 0.3s ease, opacity 0.3s ease;
   transform: translateX(-120%) rotate(-20deg);
@@ -70,8 +102,26 @@ body {
 }
 .slide-in-right { animation: slide-in-right 0.25s ease; }
 
+@keyframes slide-up {
+  from { transform: translateY(100%); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+.slide-up { animation: slide-up 0.25s ease; }
+
 @keyframes fade-in {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 .fade-in { animation: fade-in 0.2s ease; }
+
+/* ── Skeleton loading ── */
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #1a1a1a 25%, #242424 50%, #1a1a1a 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 6px;
+}

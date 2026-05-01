@@ -1,69 +1,114 @@
 /* ──────────────────────────────────────────────────────────────
-   src/lib/db.js
-   Unified data layer — uses Supabase when tables exist, 
-   falls back to localStorage when they don't.
-   This lets the app run immediately without any DB setup.
+   src/lib/db.js  v2 — Supabase PRIMARY, localStorage = offline cache
+   Write-through: Supabase first → mirror to cache.
+   Offline: queue writes → flush on reconnect.
    ────────────────────────────────────────────────────────────── */
 import { supabase } from './supabase'
 
 // ── localStorage helpers ──────────────────────────────────────
-function lsGet(key, fallback = []) {
-  try { return JSON.parse(localStorage.getItem(key) || 'null') ?? fallback } catch { return fallback }
+function lsGet(key, fallback = null) {
+  try { return JSON.parse(localStorage.getItem(key) ?? 'null') ?? fallback } catch { return fallback }
 }
-function lsSet(key, val) { localStorage.setItem(key, JSON.stringify(val)) }
+function lsSet(key, val) { try { localStorage.setItem(key, JSON.stringify(val)) } catch {} }
 function uid() { return crypto.randomUUID() }
 
-// ── Check Supabase availability ───────────────────────────────
-// Only true when tables actually exist (zero errors)
-let _supabaseReady = null
-export async function isSupabaseReady() {
-  if (_supabaseReady !== null) return _supabaseReady
-  try {
-    const { error } = await supabase.from('leads').select('id').limit(1)
-    // ANY error (incl. PGRST205 table-not-found) = not ready → use localStorage
-    _supabaseReady = !error
-  } catch {
-    _supabaseReady = false
-  }
-  return _supabaseReady
+// ── Network helpers ───────────────────────────────────────────
+export function isOnline() { return navigator.onLine !== false }
+
+// ── Offline Write Queue ───────────────────────────────────────
+const QUEUE_KEY = 'cf_offline_queue'
+
+function enqueue(op) {
+  const q = lsGet(QUEUE_KEY, [])
+  lsSet(QUEUE_KEY, [...q, { ...op, _queuedAt: Date.now() }])
 }
-export function resetSupabaseReady() { _supabaseReady = null }
+
+export async function flushOfflineQueue() {
+  const q = lsGet(QUEUE_KEY, [])
+  if (!q.length) return 0
+  const remaining = []
+  let flushed = 0
+  for (const op of q) {
+    try {
+      if      (op.type === 'insert') await supabase.from(op.table).insert(op.data)
+      else if (op.type === 'upsert') await supabase.from(op.table).upsert(op.data, { onConflict: 'id' })
+      else if (op.type === 'update') await supabase.from(op.table).update(op.data).eq('id', op.id)
+      flushed++
+    } catch {
+      remaining.push(op)
+    }
+  }
+  lsSet(QUEUE_KEY, remaining)
+  return flushed
+}
+
+export function getPendingCount() { return (lsGet(QUEUE_KEY, [])).length }
+
+// Call once from App.jsx — listens for reconnect and flushes queue
+export function initOfflineSync() {
+  window.addEventListener('online', () => { flushOfflineQueue() })
+}
+
+// ── Safe Supabase write helper ────────────────────────────────
+// Tries Supabase; if offline or error → enqueues for later
+async function sbWrite(type, table, data, id = null) {
+  if (!isOnline()) { enqueue({ type, table, data, id }); return { queued: true } }
+  try {
+    if      (type === 'insert') { const r = await supabase.from(table).insert(data).select().single(); if (r.error) throw r.error; return r.data }
+    else if (type === 'upsert') { const r = await supabase.from(table).upsert(data, { onConflict: 'id' }).select().single(); if (r.error) throw r.error; return r.data }
+    else if (type === 'update') { const r = await supabase.from(table).update(data).eq('id', id).select().single(); if (r.error) throw r.error; return r.data }
+  } catch (e) {
+    enqueue({ type, table, data, id })
+    return { queued: true }
+  }
+}
+
+// ── Safe Supabase read helper ─────────────────────────────────
+// Returns { data, fromCache } — tries Supabase, falls back to cache
+async function sbRead(table, cacheKey, buildQuery) {
+  if (isOnline()) {
+    try {
+      const { data, error } = await buildQuery(supabase.from(table))
+      if (!error && data !== null) {
+        lsSet(cacheKey, data)   // refresh cache
+        return { data, fromCache: false }
+      }
+    } catch {}
+  }
+  const cached = lsGet(cacheKey, [])
+  return { data: cached, fromCache: true }
+}
 
 // ── LEADS ─────────────────────────────────────────────────────
 export const leadsDB = {
   async getAll(filters = {}) {
-    if (await isSupabaseReady()) {
-      let q = supabase.from('leads').select('*').order('added_at', { ascending: false })
-      if (filters.status && filters.status !== 'all') q = q.eq('status', filters.status)
-      if (filters.fit    && filters.fit    !== 'all') q = q.eq('fit_score', filters.fit)
-      if (filters.search) q = q.or(`handle.ilike.%${filters.search}%,channel_name.ilike.%${filters.search}%`)
-      const { data } = await q
-      return data || []
-    }
-    let leads = lsGet('cf_leads', [])
-    if (filters.status && filters.status !== 'all') leads = leads.filter(l => l.status === filters.status)
-    if (filters.fit    && filters.fit    !== 'all') leads = leads.filter(l => l.fit_score === filters.fit)
+    const { data } = await sbRead('leads', 'cf_cache_leads', q => {
+      let query = q.select('*').order('added_at', { ascending: false })
+      if (filters.status && filters.status !== 'all') query = query.eq('status', filters.status)
+      if (filters.fit    && filters.fit    !== 'all') query = query.eq('fit_score', filters.fit)
+      if (filters.search) query = query.or(`handle.ilike.%${filters.search}%,channel_name.ilike.%${filters.search}%`)
+      return query
+    })
+    let rows = data || []
+    // Apply filters to cached data if we got from cache
+    if (filters.status && filters.status !== 'all') rows = rows.filter(l => l.status === filters.status)
+    if (filters.fit    && filters.fit    !== 'all') rows = rows.filter(l => l.fit_score === filters.fit)
     if (filters.search) {
       const s = filters.search.toLowerCase()
-      leads = leads.filter(l => l.handle?.toLowerCase().includes(s) || l.channel_name?.toLowerCase().includes(s))
+      rows = rows.filter(l => l.handle?.toLowerCase().includes(s) || l.channel_name?.toLowerCase().includes(s))
     }
-    return leads.sort((a, b) => new Date(b.added_at) - new Date(a.added_at))
+    return rows
   },
 
   async getById(id) {
-    if (await isSupabaseReady()) {
-      const { data } = await supabase.from('leads').select('*').eq('id', id).single()
-      return data
-    }
-    return lsGet('cf_leads', []).find(l => l.id === id) || null
+    const all = await this.getAll()
+    return all.find(l => l.id === id) || null
   },
 
   async upsertMany(leads, batchId) {
     const now = new Date().toISOString()
-    // Read existing from localStorage (always the source of truth)
-    const existing = lsGet('cf_leads', [])
-    const existingHandles = new Set(existing.map(l => l.handle.toLowerCase()))
-
+    const existing = await this.getAll()
+    const existingHandles = new Set(existing.map(l => (l.handle || '').toLowerCase()))
     const toInsert = []
     let skipped = 0
     for (const l of leads) {
@@ -71,34 +116,33 @@ export const leadsDB = {
       if (existingHandles.has(h)) { skipped++; continue }
       toInsert.push({ ...l, id: uid(), batch_id: batchId, added_at: now, updated_at: now })
     }
-
-    // ALWAYS write to localStorage first
-    lsSet('cf_leads', [...existing, ...toInsert])
-
-    // Also sync to Supabase if tables exist (bonus)
-    if (await isSupabaseReady() && toInsert.length > 0) {
-      await supabase.from('leads').insert(toInsert).then()
+    if (toInsert.length > 0) {
+      // Update cache immediately for instant UI
+      const cached = lsGet('cf_cache_leads', [])
+      lsSet('cf_cache_leads', [...toInsert, ...cached])
+      // Write to Supabase (or queue)
+      if (isOnline()) {
+        try { await supabase.from('leads').insert(toInsert) } catch { toInsert.forEach(r => enqueue({ type: 'insert', table: 'leads', data: r })) }
+      } else {
+        toInsert.forEach(r => enqueue({ type: 'insert', table: 'leads', data: r }))
+      }
     }
-
     return { inserted: toInsert.length, skipped }
   },
 
   async update(id, patch) {
     const upd = { ...patch, updated_at: new Date().toISOString() }
-    // Always update localStorage
-    const all = lsGet('cf_leads', [])
-    lsSet('cf_leads', all.map(l => l.id === id ? { ...l, ...upd } : l))
-    // Sync to Supabase if available
-    if (await isSupabaseReady()) {
-      await supabase.from('leads').update(upd).eq('id', id).then()
-    }
+    // Update cache immediately
+    const cached = lsGet('cf_cache_leads', [])
+    lsSet('cf_cache_leads', cached.map(l => l.id === id ? { ...l, ...upd } : l))
+    await sbWrite('update', 'leads', upd, id)
   },
 
   async getCounts() {
     const all = await this.getAll()
-    const counts = { unreviewed: 0, to_research: 0, contacted: 0, archived: 0, total: 0 }
-    all.forEach(l => { counts[l.status] = (counts[l.status] || 0) + 1; counts.total++ })
-    return counts
+    const c = { unreviewed: 0, to_research: 0, contacted: 0, replied: 0, converted: 0, archived: 0, total: 0 }
+    all.forEach(l => { if (c[l.status] !== undefined) c[l.status]++; c.total++ })
+    return c
   },
 }
 
@@ -106,13 +150,9 @@ export const leadsDB = {
 export const batchesDB = {
   async create(meta) {
     const batch = { ...meta, id: uid(), imported_at: new Date().toISOString() }
-    // Always write to localStorage
-    const all = lsGet('cf_batches', [])
-    lsSet('cf_batches', [...all, batch])
-    // Sync to Supabase if available
-    if (await isSupabaseReady()) {
-      await supabase.from('import_batches').insert(batch).then()
-    }
+    const cached = lsGet('cf_cache_batches', [])
+    lsSet('cf_cache_batches', [...cached, batch])
+    await sbWrite('insert', 'import_batches', batch)
     return batch
   },
 }
@@ -120,27 +160,22 @@ export const batchesDB = {
 // ── USER PROFILE ──────────────────────────────────────────────
 export const profileDB = {
   async get() {
-    // localStorage is source of truth; Supabase read is optional
-    const local = lsGet('cf_profile', null)
-    if (local) return local
-    if (await isSupabaseReady()) {
-      const { data } = await supabase.from('user_profile').select('*').limit(1).single()
-      if (data) { lsSet('cf_profile', data); return data }
-    }
-    return {}
+    const { data } = await sbRead('user_profile', 'cf_cache_profile', q =>
+      q.select('*').limit(1).maybeSingle()
+    )
+    return (Array.isArray(data) ? data[0] : data) || {}
   },
 
   async save(patch) {
-    const current = lsGet('cf_profile', {})
-    const updated = { ...current, ...patch, id: current.id || uid() }
-    lsSet('cf_profile', updated)
-    if (await isSupabaseReady()) {
-      if (current.id) {
-        await supabase.from('user_profile').update(patch).eq('id', current.id).then()
-      } else {
-        await supabase.from('user_profile').insert(updated).then()
-      }
+    const current = (Array.isArray(lsGet('cf_cache_profile')) ? lsGet('cf_cache_profile')[0] : lsGet('cf_cache_profile')) || {}
+    const updated = { ...current, ...patch, id: current.id || uid(), updated_at: new Date().toISOString() }
+    lsSet('cf_cache_profile', updated)
+    if (current.id) {
+      await sbWrite('update', 'user_profile', patch, current.id)
+    } else {
+      await sbWrite('insert', 'user_profile', updated)
     }
+    return updated
   },
 }
 
@@ -148,36 +183,34 @@ export const profileDB = {
 export const outreachDB = {
   async create(entry) {
     const log = { ...entry, id: uid(), created_at: new Date().toISOString() }
-    // Always write to localStorage first
-    const all = lsGet('cf_outreach', [])
-    lsSet('cf_outreach', [...all, log])
-    if (await isSupabaseReady()) {
-      await supabase.from('outreach_log').insert(log).then()
-    }
+    // Update cache
+    const cached = lsGet('cf_cache_outreach', [])
+    lsSet('cf_cache_outreach', [...cached, log])
+    await sbWrite('insert', 'outreach_log', log)
     return log
   },
 
   async getForLead(leadId) {
-    return lsGet('cf_outreach', []).filter(l => l.lead_id === leadId)
+    const all = await this.getAll()
+    return all.filter(l => l.lead_id === leadId)
   },
 
   async getAll() {
-    const logs  = lsGet('cf_outreach', [])
-    const leads = lsGet('cf_leads', [])
-    return logs.map(l => ({ ...l, leads: leads.find(ld => ld.id === l.lead_id) }))
+    const { data } = await sbRead('outreach_log', 'cf_cache_outreach', q =>
+      q.select('*').order('created_at', { ascending: false })
+    )
+    return data || []
   },
 
   async update(id, patch) {
-    const all = lsGet('cf_outreach', [])
-    lsSet('cf_outreach', all.map(l => l.id === id ? { ...l, ...patch } : l))
-    if (await isSupabaseReady()) {
-      await supabase.from('outreach_log').update(patch).eq('id', id).then()
-    }
+    const cached = lsGet('cf_cache_outreach', [])
+    lsSet('cf_cache_outreach', cached.map(l => l.id === id ? { ...l, ...patch } : l))
+    await sbWrite('update', 'outreach_log', patch, id)
   },
 
   async getDueFollowUps() {
     const today = new Date().toISOString().split('T')[0]
-    const all   = await this.getAll()
+    const all = await this.getAll()
     const fu1 = all.filter(l => l.follow_up_1_due && l.follow_up_1_due <= today && !l.follow_up_1_sent).map(l => ({ ...l, fuNum: 1 }))
     const fu2 = all.filter(l => l.follow_up_2_due && l.follow_up_2_due <= today && !l.follow_up_2_sent && l.follow_up_1_sent).map(l => ({ ...l, fuNum: 2 }))
     return [...fu1, ...fu2]
