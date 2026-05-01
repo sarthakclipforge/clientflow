@@ -39,5 +39,5 @@ export function useLeads(filters = {}) {
   const getLeadById  = (id) => leadsDB.getById(id)
   const getCounts    = ()   => leadsDB.getCounts()
 
-  return { leads, loading, error, refetch: fetch, updateStatus, updateLead, importLeads, getLeadById, getCounts }
+  return { leads, loading, error, refetch: fetch, refresh: fetch, updateStatus, updateLead, importLeads, getLeadById, getCounts }
 }

@@ -138,6 +138,25 @@ export const leadsDB = {
     await sbWrite('update', 'leads', upd, id)
   },
 
+  async delete(id) {
+    // Remove from cache immediately
+    const cached = lsGet('cf_cache_leads', [])
+    lsSet('cf_cache_leads', cached.filter(l => l.id !== id))
+    // Delete from Supabase
+    if (isOnline()) {
+      try {
+        const { error } = await supabase.from('leads').delete().eq('id', id)
+        if (error) throw error
+      } catch (e) {
+        // Re-add to cache on failure so data isn't lost
+        const c = lsGet('cf_cache_leads', [])
+        const deleted = cached.find(l => l.id === id)
+        if (deleted) lsSet('cf_cache_leads', [deleted, ...c])
+        throw e
+      }
+    }
+  },
+
   async getCounts() {
     const all = await this.getAll()
     const c = { unreviewed: 0, to_research: 0, contacted: 0, replied: 0, converted: 0, archived: 0, total: 0 }
@@ -145,6 +164,7 @@ export const leadsDB = {
     return c
   },
 }
+
 
 // ── IMPORT BATCHES ────────────────────────────────────────────
 export const batchesDB = {

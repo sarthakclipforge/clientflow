@@ -1,7 +1,10 @@
 /* src/pages/LeadList.jsx — Mobile: card list + pill filters. Desktop: table */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLeads } from '../hooks/useLeads'
+import { leadsDB } from '../lib/db'
+import SwipeableRow from '../components/SwipeableRow'
+import toast from 'react-hot-toast'
 
 const STATUS_OPTS  = ['all','unreviewed','to_research','contacted','archived']
 const FIT_OPTS     = ['all','HIGH FIT','MODERATE FIT','LOW FIT']
@@ -33,11 +36,24 @@ export default function LeadList() {
   const [filters, setFilters] = useState({ status: 'all', fit: 'all', search: '' })
   const [counts, setCounts]   = useState({})
   const [detailLead, setDetailLead] = useState(null)
-  const { leads, loading, getCounts } = useLeads(
+  const { leads, loading, getCounts, refresh } = useLeads(
     Object.fromEntries(Object.entries(filters).filter(([,v]) => v && v !== 'all'))
   )
 
   useEffect(() => { getCounts().then(setCounts) }, [leads])
+
+  const deleteLead = useCallback(async (lead) => {
+    const prev = detailLead
+    setDetailLead(null)
+    try {
+      await leadsDB.delete(lead.id)
+      toast.success(`Deleted ${lead.handle}`)
+      refresh()
+    } catch {
+      toast.error('Delete failed')
+      setDetailLead(prev)
+    }
+  }, [detailLead])
 
   const STATS = [
     { label: 'Unreviewed',  value: counts.unreviewed || 0, status: 'unreviewed', color: '#60a5fa' },
@@ -143,35 +159,37 @@ export default function LeadList() {
             </div>
           ) : (
             <>
-              {/* Mobile: card list */}
+              {/* Mobile: card list with iOS swipe-to-delete */}
               <div className="md:hidden">
                 {leads.map(lead => (
-                  <div key={lead.id} className="flex items-center gap-3 px-4 py-3.5 border-b active:bg-white/5"
-                    style={{ borderColor: '#111' }}
-                    onClick={() => setDetailLead(lead)}>
-                    <div className="w-9 h-9 rounded-lg flex items-center justify-center text-xs font-bold shrink-0"
-                      style={{ background: '#1a2a1a', color: '#4ade80' }}>
-                      {(lead.channel_name || lead.handle)[0]?.toUpperCase()}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium truncate" style={{ color: '#c0c0c0' }}>{lead.handle}</div>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-xs" style={{ color: '#555' }}>{lead.subscribers}</span>
-                        {lead.email    && <span style={{ color: '#4ade80', fontSize: 10 }}>✉</span>}
-                        {lead.instagram && <span style={{ color: '#e1306c', fontSize: 10 }}>IG</span>}
-                        {lead.linkedin  && <span style={{ color: '#0a66c2', fontSize: 10 }}>in</span>}
+                  <SwipeableRow key={lead.id} onDelete={() => deleteLead(lead)}>
+                    <div className="flex items-center gap-3 px-4 py-3.5 border-b active:bg-white/5"
+                      style={{ borderColor: '#111' }}
+                      onClick={() => setDetailLead(lead)}>
+                      <div className="w-9 h-9 rounded-lg flex items-center justify-center text-xs font-bold shrink-0"
+                        style={{ background: '#1a2a1a', color: '#4ade80' }}>
+                        {(lead.channel_name || lead.handle)[0]?.toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium truncate" style={{ color: '#c0c0c0' }}>{lead.handle}</div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-xs" style={{ color: '#555' }}>{lead.subscribers}</span>
+                          {lead.email    && <span style={{ color: '#4ade80', fontSize: 10 }}>✉</span>}
+                          {lead.instagram && <span style={{ color: '#e1306c', fontSize: 10 }}>IG</span>}
+                          {lead.linkedin  && <span style={{ color: '#0a66c2', fontSize: 10 }}>in</span>}
+                        </div>
+                      </div>
+                      <div className="flex flex-col items-end gap-1">
+                        <span className="text-[10px] font-bold" style={{ color: FIT_COLORS[lead.fit_score] || '#888' }}>
+                          {(lead.fit_score || '').replace(' FIT', '')}
+                        </span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full capitalize"
+                          style={{ background: `${STATUS_COLORS[lead.status] || '#555'}20`, color: STATUS_COLORS[lead.status] || '#555' }}>
+                          {(lead.status || 'unreviewed').replace('_', ' ')}
+                        </span>
                       </div>
                     </div>
-                    <div className="flex flex-col items-end gap-1">
-                      <span className="text-[10px] font-bold" style={{ color: FIT_COLORS[lead.fit_score] || '#888' }}>
-                        {(lead.fit_score || '').replace(' FIT', '')}
-                      </span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full capitalize"
-                        style={{ background: `${STATUS_COLORS[lead.status] || '#555'}20`, color: STATUS_COLORS[lead.status] || '#555' }}>
-                        {(lead.status || 'unreviewed').replace('_', ' ')}
-                      </span>
-                    </div>
-                  </div>
+                  </SwipeableRow>
                 ))}
               </div>
 
@@ -317,6 +335,17 @@ export default function LeadList() {
                 style={{ background: '#1c1c1c', color: '#888', border: '1px solid #2a2a2a' }}
                 onClick={() => { setDetailLead(null); navigate(`/research/${detailLead.id}`) }}>
                 ✏ Edit Research Data
+              </button>
+              {/* Delete button — desktop detail panel */}
+              <button
+                className="w-full text-center text-xs py-3 rounded-xl font-semibold"
+                style={{ background: 'rgba(220,38,38,0.08)', color: '#f87171', border: '1px solid rgba(220,38,38,0.2)' }}
+                onClick={() => {
+                  if (window.confirm(`Delete ${detailLead.handle}? This cannot be undone.`)) {
+                    deleteLead(detailLead)
+                  }
+                }}>
+                🗑 Delete Lead
               </button>
             </div>
           </div>
