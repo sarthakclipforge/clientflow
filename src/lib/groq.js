@@ -101,6 +101,77 @@ function parseGroqJSON(raw) {
   throw new Error('Groq returned unparseable response')
 }
 
+// ─── Vision: Extract profile info from screenshot ─────────────
+// Uses meta-llama/llama-4-scout which supports image input.
+const VISION_MODELS = [
+  'meta-llama/llama-4-scout-17b-16e-instruct',
+  'llama-3.2-11b-vision-preview',
+  'llama-3.2-90b-vision-preview',
+]
+
+export async function extractProfileFromImage(apiKey, imageBase64, mimeType = 'image/jpeg') {
+  // Try vision models in order of preference
+  let lastErr
+  for (const visionModel of VISION_MODELS) {
+    try {
+      const res = await fetch(`${GROQ_BASE}/chat/completions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: visionModel,
+          temperature: 0.1,
+          max_tokens: 600,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'image_url',
+                  image_url: { url: `data:${mimeType};base64,${imageBase64}` },
+                },
+                {
+                  type: 'text',
+                  text: `You are a data extractor. Look at this social media / YouTube profile screenshot and extract every piece of information you can see.
+
+Return ONLY valid JSON with these fields (use null if not visible):
+{
+  "handle": "@username or handle (include @ prefix)",
+  "channel_name": "display name or channel name",
+  "subscribers": "subscriber/follower count as shown (e.g. '694K', '1.2M')",
+  "email": "email address if visible",
+  "instagram": "@instagram_handle if visible",
+  "twitter": "@twitter_handle if visible",
+  "linkedin": "linkedin URL or handle if visible",
+  "website": "website URL if visible",
+  "niche": "one-line description of content niche/topic",
+  "notes": "any other useful info: location, bio text, content themes, etc",
+  "fit_score": "HIGH FIT or MODERATE FIT or LOW FIT — judge based on whether this looks like a professional creator who could benefit from video editing services"
+}
+
+Return ONLY the JSON object. No explanation, no markdown fences.`,
+                },
+              ],
+            },
+          ],
+        }),
+      })
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}))
+        throw new Error(e?.error?.message || `HTTP ${res.status}`)
+      }
+      const data = await res.json()
+      const raw  = data.choices?.[0]?.message?.content || ''
+      return parseGroqJSON(raw)
+    } catch (e) {
+      lastErr = e
+      // If model not found or not supported, try next
+      if (e.message?.includes('model') || e.message?.includes('404') || e.message?.includes('not found')) continue
+      throw e  // Other errors (auth, rate limit) — don't retry
+    }
+  }
+  throw lastErr || new Error('No vision model available')
+}
+
 // ─── System Prompt ────────────────────────────────────────────
 const SYSTEM_PROMPT = `You are an expert cold outreach copywriter for a freelance video editing business.
 

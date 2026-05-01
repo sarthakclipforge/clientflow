@@ -1,16 +1,21 @@
-/* src/pages/Import.jsx — PDF / CSV / Manual import wizard */
+/* src/pages/Import.jsx — PDF / CSV / Manual / Screenshot import wizard */
 import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLeads } from '../hooks/useLeads'
 import { parseLeadScoutPDF, parseLeadScoutCSV } from '../lib/pdfParser'
+import { extractProfileFromImage } from '../lib/groq'
+import { useStore } from '../lib/store'
 
-const TABS = ['PDF', 'CSV', 'Manual']
+const TABS = ['PDF', 'CSV', 'Screenshot', 'Manual']
+
+const TAB_ICONS = { PDF: '📄 PDF', CSV: '📊 CSV', Screenshot: '📸 Screenshot', Manual: '✏️ Manual' }
 
 const FIT_COLORS = { 'HIGH FIT': '#4ade80', 'MODERATE FIT': '#fbbf24', 'LOW FIT': '#f87171' }
 
 export default function Import() {
   const navigate   = useNavigate()
   const { importLeads } = useLeads()
+  const { detectedModel } = useStore()
 
   const [tab, setTab]           = useState('PDF')
   const [parsing, setParsing]   = useState(false)
@@ -18,10 +23,16 @@ export default function Import() {
   const [error, setError]       = useState('')
   const [importing, setImporting] = useState(false)
   const [result, setResult]     = useState(null)
-  const fileRef = useRef()
+  const fileRef    = useRef()
+  const imgRef     = useRef()
+
+  // Screenshot state
+  const [screenshotImg, setScreenshotImg] = useState(null)   // data URL for preview
+  const [extracting, setExtracting]       = useState(false)
+  const [extracted, setExtracted]         = useState(null)   // raw result from vision
 
   // Manual form state
-  const [manual, setManual] = useState({ handle: '', channel_name: '', subscribers: '', fit_score: 'MODERATE FIT', email: '', notes: '' })
+  const [manual, setManual] = useState({ handle: '', channel_name: '', subscribers: '', fit_score: 'MODERATE FIT', email: '', instagram: '', twitter: '', linkedin: '', website: '', notes: '' })
 
   async function onFileSelect(e) {
     const file = e.target.files?.[0]
@@ -71,19 +82,26 @@ export default function Import() {
         handle,
         channel_name:  manual.channel_name || handle,
         channel_url:   `https://www.youtube.com/${handle}`,
-        subscribers:   manual.subscribers || '',
+        subscribers:   manual.subscribers  || '',
         fit_score:     manual.fit_score,
-        email:         manual.email || null,
-        notes:         manual.notes || null,
+        email:         manual.email        || null,
+        instagram:     manual.instagram    || null,
+        twitter:       manual.twitter      || null,
+        linkedin:      manual.linkedin     || null,
+        website:       manual.website      || null,
+        notes:         manual.notes        || null,
         contact_status: 'unknown',
         status:        'unreviewed',
       }
-      const res = await importLeads([lead], { source: 'manual', lead_count: 1 })
+      const source = extracted ? 'screenshot' : 'manual'
+      const res = await importLeads([lead], { source, lead_count: 1 })
       setResult(res)
+      setExtracted(null)   // clear screenshot state after save
     } catch (e) {
       setError(e.message)
     }
     setImporting(false)
+
   }
 
   if (result) {
@@ -107,28 +125,136 @@ export default function Import() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto py-6 px-4">
+    <div className="max-w-2xl mx-auto py-6 px-4 pb-24">
       <div className="mb-6">
         <h1 className="text-xl font-bold text-white mb-1">Import Leads</h1>
-        <p className="text-sm" style={{ color: '#6b6b6b' }}>From LeadScout PDF, CSV, or add manually</p>
+        <p className="text-sm" style={{ color: '#6b6b6b' }}>From LeadScout PDF, CSV, screenshot, or add manually</p>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 mb-6 p-1 rounded-lg w-fit" style={{ background: '#141414', border: '1px solid #2a2a2a' }}>
+      {/* Tabs — scrollable on mobile */}
+      <div className="flex gap-1 mb-6 p-1 rounded-lg overflow-x-auto" style={{ background: '#141414', border: '1px solid #2a2a2a' }}>
         {TABS.map(t => (
           <button
             key={t}
-            className="px-4 py-2 rounded-md text-sm font-medium transition-all"
+            className="shrink-0 px-3 py-2 rounded-md text-sm font-medium transition-all"
             style={{
               background: tab === t ? '#2a2a2a' : 'transparent',
               color:      tab === t ? '#e8e8e8' : '#6b6b6b',
             }}
-            onClick={() => { setTab(t); setPreview(null); setError('') }}
+            onClick={() => { setTab(t); setPreview(null); setError(''); setScreenshotImg(null); setExtracted(null) }}
           >
-            {t === 'PDF' ? '📄 PDF' : t === 'CSV' ? '📊 CSV' : '✏️ Manual'}
+            {TAB_ICONS[t]}
           </button>
         ))}
       </div>
+
+      {/* ── Screenshot Tab ─────────────────────────────────── */}
+      {tab === 'Screenshot' && (
+        <div className="fade-in">
+          {!screenshotImg ? (
+            /* Pick image */
+            <div>
+              {/* Desktop drag zone */}
+              <div
+                className="hidden md:flex flex-col items-center justify-center border-2 border-dashed rounded-2xl p-12 cursor-pointer transition-colors"
+                style={{ borderColor: '#2a2a2a', background: '#0a0a0a' }}
+                onClick={() => imgRef.current?.click()}
+                onDragOver={e => e.preventDefault()}
+                onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) onScreenshotSelect({ target: { files: [f] } }) }}
+              >
+                <div className="text-5xl mb-4">📸</div>
+                <div className="text-sm font-semibold mb-1" style={{ color: '#888' }}>
+                  Drop a profile screenshot here, or click to browse
+                </div>
+                <div className="text-xs" style={{ color: '#444' }}>
+                  Works with YouTube, Instagram, LinkedIn profile pages
+                </div>
+              </div>
+              {/* Mobile: camera or gallery */}
+              <div className="flex flex-col gap-3 md:hidden">
+                <button
+                  className="w-full py-10 rounded-2xl border-2 border-dashed flex flex-col items-center gap-3"
+                  style={{ borderColor: '#2a2a2a', background: '#0f0f0f' }}
+                  onClick={() => { imgRef.current.setAttribute('capture', 'environment'); imgRef.current.click() }}
+                >
+                  <span className="text-4xl">📷</span>
+                  <span className="text-sm font-semibold" style={{ color: '#888' }}>Take a Photo</span>
+                  <span className="text-xs" style={{ color: '#444' }}>Open camera and point at profile screen</span>
+                </button>
+                <button
+                  className="w-full py-6 rounded-2xl border flex flex-col items-center gap-2"
+                  style={{ borderColor: '#2a2a2a', background: '#0f0f0f' }}
+                  onClick={() => { imgRef.current.removeAttribute('capture'); imgRef.current.click() }}
+                >
+                  <span className="text-2xl">🖼</span>
+                  <span className="text-sm font-medium" style={{ color: '#666' }}>Upload from Gallery</span>
+                </button>
+              </div>
+              <input
+                ref={imgRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={onScreenshotSelect}
+              />
+              <p className="mt-4 text-xs text-center" style={{ color: '#444' }}>
+                💡 Tip: screenshot the YouTube About tab or Instagram bio to capture email & links
+              </p>
+            </div>
+          ) : (
+            /* Image preview + extract / result */
+            <div className="fade-in">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-medium" style={{ color: '#888' }}>Screenshot preview</span>
+                <button className="text-xs" style={{ color: '#555' }} onClick={clearScreenshot}>← Change photo</button>
+              </div>
+
+              {/* Preview */}
+              <div className="rounded-xl overflow-hidden mb-4 border" style={{ borderColor: '#2a2a2a', maxHeight: 280 }}>
+                <img src={screenshotImg} alt="Profile screenshot" className="w-full object-cover" />
+              </div>
+
+              {!extracted ? (
+                <button
+                  className="w-full py-3.5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2"
+                  style={{ background: extracting ? '#1c1c1c' : '#4ade80', color: extracting ? '#555' : '#000' }}
+                  onClick={runExtraction}
+                  disabled={extracting}
+                >
+                  {extracting ? (
+                    <><span className="animate-spin">✨</span> Analysing with AI…</>
+                  ) : (
+                    <>✨ Extract Profile Info</>
+                  )}
+                </button>
+              ) : (
+                /* Extracted — show summary + go to form */
+                <div className="rounded-xl border p-4 mb-4" style={{ background: '#141414', borderColor: '#2a2a2a' }}>
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-green-400 text-sm">✓</span>
+                    <span className="text-sm font-semibold text-white">Profile extracted! Review below.</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs" style={{ color: '#888' }}>
+                    {extracted.handle       && <div><span style={{ color: '#555' }}>Handle:</span> <span style={{ color: '#c0c0c0' }}>{extracted.handle}</span></div>}
+                    {extracted.channel_name && <div><span style={{ color: '#555' }}>Name:</span> <span style={{ color: '#c0c0c0' }}>{extracted.channel_name}</span></div>}
+                    {extracted.subscribers  && <div><span style={{ color: '#555' }}>Subs:</span> <span style={{ color: '#c0c0c0' }}>{extracted.subscribers}</span></div>}
+                    {extracted.email        && <div><span style={{ color: '#555' }}>Email:</span> <span style={{ color: '#4ade80' }}>{extracted.email}</span></div>}
+                    {extracted.instagram    && <div><span style={{ color: '#555' }}>IG:</span> <span style={{ color: '#e1306c' }}>{extracted.instagram}</span></div>}
+                    {extracted.niche        && <div className="col-span-2"><span style={{ color: '#555' }}>Niche:</span> <span style={{ color: '#c0c0c0' }}>{extracted.niche}</span></div>}
+                  </div>
+                  <button
+                    className="mt-4 w-full py-3 rounded-xl font-semibold text-sm"
+                    style={{ background: '#4ade80', color: '#000' }}
+                    onClick={() => setTab('Manual')}
+                  >
+                    Review &amp; Add Lead →
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* PDF / CSV upload */}
       {(tab === 'PDF' || tab === 'CSV') && !preview && (
@@ -236,22 +362,32 @@ export default function Import() {
         </div>
       )}
 
-      {/* Manual */}
+      {/* Manual (also used as review after screenshot extraction) */}
       {tab === 'Manual' && (
         <div className="rounded-xl border p-5" style={{ background: '#141414', borderColor: '#2a2a2a' }}>
+          {extracted && (
+            <div className="flex items-center gap-2 mb-4 px-3 py-2 rounded-lg text-xs"
+              style={{ background: 'rgba(74,222,128,0.06)', border: '1px solid rgba(74,222,128,0.15)', color: '#4ade80' }}>
+              ✨ Pre-filled from screenshot — edit anything before saving
+            </div>
+          )}
           <div className="flex flex-col gap-4">
             {[
-              { key: 'handle',       label: '@Handle *',          placeholder: '@nateherk' },
-              { key: 'channel_name', label: 'Channel Name',       placeholder: 'Nate Herk | AI Automation' },
-              { key: 'subscribers',  label: 'Subscribers',        placeholder: '694K' },
-              { key: 'email',        label: 'Email (if known)',    placeholder: 'hello@example.com' },
-              { key: 'notes',        label: 'Notes',              placeholder: 'Business/AI niche, solo creator' },
+              { key: 'handle',       label: '@Handle *',       placeholder: '@nateherk' },
+              { key: 'channel_name', label: 'Channel Name',    placeholder: 'Nate Herk | AI Automation' },
+              { key: 'subscribers',  label: 'Subscribers',     placeholder: '694K' },
+              { key: 'email',        label: 'Email',           placeholder: 'hello@example.com' },
+              { key: 'instagram',    label: 'Instagram',       placeholder: '@nateherk' },
+              { key: 'twitter',      label: 'Twitter / X',     placeholder: '@nateherk' },
+              { key: 'linkedin',     label: 'LinkedIn',        placeholder: 'linkedin.com/in/...' },
+              { key: 'website',      label: 'Website',         placeholder: 'nateherk.com' },
+              { key: 'notes',        label: 'Notes / Niche',   placeholder: 'Business/AI niche, solo creator' },
             ].map(f => (
               <div key={f.key}>
                 <label className="block text-xs font-medium mb-1.5" style={{ color: '#888' }}>{f.label}</label>
                 <input
-                  className="w-full px-3 py-2 rounded-lg text-sm outline-none"
-                  style={{ background: '#1c1c1c', border: '1px solid #2a2a2a', color: '#e8e8e8' }}
+                  className="w-full px-3 py-2.5 rounded-lg text-sm outline-none"
+                  style={{ background: '#1c1c1c', border: '1px solid #2a2a2a', color: '#e8e8e8', fontSize: 16 }}
                   placeholder={f.placeholder}
                   value={manual[f.key]}
                   onChange={e => setManual(p => ({ ...p, [f.key]: e.target.value }))}
@@ -261,8 +397,8 @@ export default function Import() {
             <div>
               <label className="block text-xs font-medium mb-1.5" style={{ color: '#888' }}>Fit Score</label>
               <select
-                className="px-3 py-2 rounded-lg text-sm outline-none"
-                style={{ background: '#1c1c1c', border: '1px solid #2a2a2a', color: '#e8e8e8' }}
+                className="w-full px-3 py-2.5 rounded-lg text-sm outline-none"
+                style={{ background: '#1c1c1c', border: '1px solid #2a2a2a', color: '#e8e8e8', fontSize: 16 }}
                 value={manual.fit_score}
                 onChange={e => setManual(p => ({ ...p, fit_score: e.target.value }))}
               >
@@ -271,15 +407,16 @@ export default function Import() {
             </div>
           </div>
           <button
-            className="mt-4 px-6 py-2.5 rounded-lg font-semibold text-sm"
+            className="mt-5 w-full py-3 rounded-xl font-semibold text-sm"
             style={{ background: '#4ade80', color: '#000' }}
             onClick={importManual}
             disabled={importing}
           >
-            {importing ? 'Saving…' : 'Add Lead'}
+            {importing ? 'Saving…' : '✓ Add Lead'}
           </button>
         </div>
       )}
+
 
       {error && (
         <div className="mt-4 px-4 py-3 rounded-lg text-sm" style={{ background: 'rgba(248,113,113,0.08)', color: '#f87171', border: '1px solid rgba(248,113,113,0.2)' }}>
