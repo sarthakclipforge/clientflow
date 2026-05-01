@@ -120,31 +120,35 @@ export const leadsDB = {
     for (const l of leads) {
       const h = (l.handle || '').toLowerCase()
       if (existingHandles.has(h)) { skipped++; continue }
-      toInsert.push({ ...l, id: uid(), batch_id: batchId, added_at: now, updated_at: now })
+      // Store batch_id in the object but we will insert WITHOUT it to avoid FK issues
+      // The batch_id FK is nice-to-have; data integrity is more important
+      toInsert.push({ ...l, id: uid(), batch_id: batchId || null, added_at: now, updated_at: now })
     }
     if (toInsert.length > 0) {
-      // Update cache immediately for instant UI
+      // 1. Update local cache immediately — instant UI feedback
       const cached = lsGet('cf_cache_leads', [])
       lsSet('cf_cache_leads', [...toInsert, ...cached])
-      // Write to Supabase — retry without batch_id if FK fails
+
+      // 2. Insert to Supabase WITHOUT batch_id (avoids FK constraint failure)
+      //    batch_id column allows null, so this is safe
+      const forSupabase = toInsert.map(({ batch_id, ...r }) => r)  // strip batch_id
       if (isOnline()) {
         try {
-          const { error } = await supabase.from('leads').insert(toInsert)
+          const { error } = await supabase.from('leads').insert(forSupabase)
           if (error) {
-            // FK violation on batch_id? retry without it
-            if (error.code === '23503') {
-              const stripped = toInsert.map(({ batch_id, ...r }) => r)
-              const r2 = await supabase.from('leads').insert(stripped)
-              if (r2.error) toInsert.forEach(r => enqueue({ type: 'insert', table: 'leads', data: r }))
-            } else {
-              toInsert.forEach(r => enqueue({ type: 'insert', table: 'leads', data: r }))
-            }
+            // Store error for debugging, queue for retry
+            try { localStorage.setItem('cf_last_sb_error', JSON.stringify({ error, at: now })) } catch {}
+            toInsert.forEach(r => enqueue({ type: 'insert', table: 'leads', data: { ...r, batch_id: null } }))
+          } else {
+            // Clear any previous error
+            try { localStorage.removeItem('cf_last_sb_error') } catch {}
           }
-        } catch {
-          toInsert.forEach(r => enqueue({ type: 'insert', table: 'leads', data: r }))
+        } catch (e) {
+          try { localStorage.setItem('cf_last_sb_error', JSON.stringify({ error: e?.message, at: now })) } catch {}
+          toInsert.forEach(r => enqueue({ type: 'insert', table: 'leads', data: { ...r, batch_id: null } }))
         }
       } else {
-        toInsert.forEach(r => enqueue({ type: 'insert', table: 'leads', data: r }))
+        toInsert.forEach(r => enqueue({ type: 'insert', table: 'leads', data: { ...r, batch_id: null } }))
       }
     }
     return { inserted: toInsert.length, skipped }
