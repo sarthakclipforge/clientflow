@@ -101,7 +101,55 @@ export default function Import() {
       setError(e.message)
     }
     setImporting(false)
+  }
 
+  // ── Screenshot handlers ────────────────────────────────────────
+  function onScreenshotSelect(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setError(''); setExtracted(null)
+    const reader = new FileReader()
+    reader.onload = () => setScreenshotImg(reader.result)
+    reader.readAsDataURL(file)
+  }
+
+  async function runExtraction() {
+    if (!screenshotImg) return
+    const profile = JSON.parse(localStorage.getItem('cf_cache_profile') || 'null')
+    const apiKey  = profile?.groq_key_ref
+    if (!apiKey) { setError('Add your Groq API key in Settings first'); return }
+
+    setExtracting(true); setError('')
+    try {
+      const base64    = screenshotImg.split(',')[1]
+      const mimeMatch = screenshotImg.match(/data:([^;]+);/)
+      const mimeType  = mimeMatch?.[1] || 'image/jpeg'
+      const result    = await extractProfileFromImage(apiKey, base64, mimeType)
+      setExtracted(result)
+      // Auto-fill manual form
+      setManual(prev => ({
+        ...prev,
+        handle:       result.handle       || prev.handle,
+        channel_name: result.channel_name || prev.channel_name,
+        subscribers:  result.subscribers  || prev.subscribers,
+        fit_score:    ['HIGH FIT','MODERATE FIT','LOW FIT'].includes(result.fit_score)
+                        ? result.fit_score : prev.fit_score,
+        email:        result.email        || prev.email,
+        instagram:    result.instagram    || prev.instagram,
+        twitter:      result.twitter      || prev.twitter,
+        linkedin:     result.linkedin     || prev.linkedin,
+        website:      result.website      || prev.website,
+        notes:        [result.niche, result.notes].filter(Boolean).join(' | ') || prev.notes,
+      }))
+    } catch (e) {
+      setError('Vision extraction failed: ' + e.message)
+    }
+    setExtracting(false)
+  }
+
+  function clearScreenshot() {
+    setScreenshotImg(null); setExtracted(null); setError('')
+    if (imgRef.current) imgRef.current.value = ''
   }
 
   if (result) {
