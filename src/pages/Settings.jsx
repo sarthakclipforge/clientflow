@@ -73,10 +73,10 @@ export default function Settings() {
   const dotColor = { idle: '#6b6b6b', detecting: '#60a5fa', ready: '#4ade80', error: '#f87171' }[modelState]
 
   return (
-    <div className="max-w-2xl mx-auto py-8 px-6">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-white mb-1">Settings</h1>
-        <p className="text-sm" style={{ color: '#6b6b6b' }}>Configure your profile and AI credentials</p>
+    <div className="max-w-2xl mx-auto py-6 px-4">
+      <div className="mb-6">
+        <h1 className="text-xl font-bold text-white mb-1">Settings</h1>
+        <p className="text-sm" style={{ color: '#6b6b6b' }}>Profile &amp; AI credentials</p>
       </div>
 
       <form onSubmit={handleSave} className="flex flex-col gap-6">
@@ -121,21 +121,24 @@ export default function Settings() {
         {/* Groq key section */}
         <section className="rounded-xl border p-5" style={{ background: '#141414', borderColor: '#2a2a2a' }}>
           <h2 className="text-sm font-semibold uppercase tracking-wider mb-4" style={{ color: '#6b6b6b' }}>Groq API Key</h2>
-          <div className="flex gap-3">
+          {/* Stack vertically on mobile, side-by-side on desktop */}
+          <div className="flex flex-col md:flex-row gap-3">
             <input
               id="groq-key"
               type="password"
-              className="flex-1 px-3 py-2 rounded-lg text-sm font-mono outline-none"
-              style={{ background: '#1c1c1c', border: '1px solid #2a2a2a', color: '#e8e8e8' }}
+              className="flex-1 px-3 py-2.5 rounded-lg text-sm font-mono outline-none"
+              style={{ background: '#1c1c1c', border: '1px solid #2a2a2a', color: '#e8e8e8', fontSize: 16 }}
               placeholder="gsk_…"
               value={form.groq_key_ref}
               onChange={onKeyChange}
               autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
               spellCheck={false}
             />
             <div
-              className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium whitespace-nowrap"
-              style={{ background: '#1c1c1c', border: '1px solid #2a2a2a', minWidth: 160 }}
+              className="flex items-center gap-2 px-3 py-2.5 rounded-lg text-xs font-medium"
+              style={{ background: '#1c1c1c', border: '1px solid #2a2a2a' }}
             >
               <div
                 className="w-2 h-2 rounded-full shrink-0"
@@ -178,7 +181,7 @@ export default function Settings() {
 
         <button
           type="submit"
-          className="self-start px-6 py-2.5 rounded-lg font-semibold text-sm transition-all"
+          className="w-full md:w-auto md:self-start px-6 py-3 rounded-xl font-semibold text-sm transition-all"
           style={{ background: saved ? '#16a34a' : '#4ade80', color: '#000' }}
         >
           {saved ? '✓ Saved' : 'Save Settings'}

@@ -76,7 +76,7 @@ export default function Research() {
 
   return (
     <div className="flex flex-col h-full overflow-y-auto">
-      <div className="max-w-xl mx-auto w-full py-8 px-6">
+      <div className="max-w-xl mx-auto w-full py-4 px-4">
 
         {/* Context card */}
         <div className="rounded-xl border p-4 mb-5" style={{ background: '#141414', borderColor: '#2a2a2a' }}>
@@ -205,23 +205,23 @@ export default function Research() {
           </div>
         </div>
 
-        {/* Actions */}
-        <div className="flex gap-3 mt-6 pb-8">
+        {/* Actions — sticky on mobile */}
+        <div className="sticky bottom-0 flex gap-3 mt-6 pb-4 pt-2" style={{ background: '#0a0a0a' }}>
           <button
             className="flex-1 py-3 rounded-xl font-semibold text-sm"
             style={{ background: '#4ade80', color: '#000' }}
             onClick={continueToContact}
             disabled={saving}
           >
-            {saving ? 'Saving…' : 'Continue to Make Contact →'}
+            {saving ? 'Saving…' : 'Continue →'}
           </button>
           <button
-            className="px-4 py-3 rounded-xl font-medium text-sm"
+            className="px-4 py-3 rounded-xl font-medium text-sm shrink-0"
             style={{ background: '#1c1c1c', color: '#888', border: '1px solid #2a2a2a' }}
             onClick={skipForNow}
             disabled={saving}
           >
-            Skip for now
+            Skip
           </button>
         </div>
       </div>

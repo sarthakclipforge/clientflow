@@ -66,13 +66,13 @@ export default function Stats() {
 
   return (
     <div className="flex flex-col h-full overflow-y-auto">
-      <div className="px-6 py-4 border-b shrink-0 flex items-center justify-between" style={{ borderColor: '#1e1e1e' }}>
-        <h1 className="text-lg font-bold text-white">Stats</h1>
+      <div className="px-4 py-3 border-b shrink-0 flex items-center justify-between gap-2" style={{ borderColor: '#1e1e1e' }}>
+        <h1 className="text-base font-bold text-white">Stats</h1>
         <div className="flex gap-1 p-1 rounded-lg" style={{ background: '#141414', border: '1px solid #2a2a2a' }}>
           {PERIODS.map(p => (
             <button
               key={p.days}
-              className="px-3 py-1.5 rounded-md text-xs font-medium transition-all"
+              className="px-2.5 py-1.5 rounded-md text-xs font-medium transition-all"
               style={{ background: period === p.days ? '#2a2a2a' : 'transparent', color: period === p.days ? '#e8e8e8' : '#6b6b6b' }}
               onClick={() => setPeriod(p.days)}
             >
@@ -82,12 +82,13 @@ export default function Stats() {
         </div>
       </div>
 
-      <div className="flex-1 p-6">
+      <div className="flex-1 p-4">
         {loading ? (
           <div className="flex items-center justify-center h-40 text-sm" style={{ color: '#444' }}>Loading stats…</div>
         ) : !stats ? null : (
-          <div className="flex flex-col gap-6">
-            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <div className="flex flex-col gap-4">
+            {/* 1 col on mobile, 2 on sm, 4 on lg */}
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <StatCard label="Total Outreach"   value={stats.total}   icon="📤" />
               <StatCard label="Response Rate"    value={pct(stats.replied, stats.total)}    color="#4ade80" icon="💬" sub={`${stats.replied} from ${stats.total}`} />
               <StatCard label="Conversion Rate"  value={pct(stats.converted, stats.replied)} color="#fbbf24" icon="🏆" sub={`${stats.converted} from ${stats.replied} replies`} />

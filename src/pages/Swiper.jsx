@@ -86,20 +86,25 @@ export default function Swiper() {
     <div className="flex flex-col h-full">
       <Toaster position="bottom-center" />
 
-      <div className="flex items-center justify-between px-6 py-4 border-b shrink-0" style={{ borderColor: '#1e1e1e' }}>
+      <div className="flex items-center justify-between px-4 py-3 border-b shrink-0" style={{ borderColor: '#1e1e1e' }}>
         <div>
-          <h1 className="text-lg font-bold text-white">Swiper</h1>
+          <h1 className="text-base font-bold text-white">Swiper</h1>
           <p className="text-xs mt-0.5" style={{ color: '#6b6b6b' }}>
             {remaining > 0 ? `${remaining} lead${remaining !== 1 ? 's' : ''} in queue` : 'Queue empty'}
           </p>
         </div>
-        <div className="flex items-center gap-3 text-xs" style={{ color: '#555' }}>
+        {/* Keyboard hints — desktop only */}
+        <div className="hidden md:flex items-center gap-3 text-xs" style={{ color: '#555' }}>
           <span>← / A = Archive</span>
           <span>→ / D = Research</span>
         </div>
+        {/* Mobile swipe hint */}
+        <div className="flex md:hidden text-xs" style={{ color: '#555' }}>
+          <span>← Skip · Research →</span>
+        </div>
       </div>
 
-      <div className="flex-1 flex items-center justify-center p-6">
+      <div className="flex-1 flex items-center justify-center p-4 md:p-6">
         {remaining === 0 ? (
           <div className="text-center">
             <div className="text-5xl mb-4">🎉</div>
@@ -125,7 +130,7 @@ export default function Swiper() {
             </div>
           </div>
         ) : (
-          <div className="relative w-full" style={{ maxWidth: 480, height: 420 }}>
+          <div className="relative w-full" style={{ maxWidth: 480, height: 'min(420px, 60dvh)' }}>
             {queue.slice(index, index + 3).map((lead, i) => (
               <LeadCard
                 key={lead.id}

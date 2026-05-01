@@ -157,7 +157,7 @@ export default function MakeContact() {
   return (
     <div className="flex flex-col h-full overflow-y-auto">
       <Toaster position="top-right" />
-      <div className="max-w-xl mx-auto w-full py-8 px-6">
+      <div className="max-w-xl mx-auto w-full py-4 px-4">
 
         <div className="flex items-center justify-between mb-6">
           <div>
@@ -351,16 +351,17 @@ export default function MakeContact() {
               </button>
             </div>
 
-            <div className="flex gap-3">
+            {/* Stacked on mobile, side-by-side on desktop */}
+            <div className="flex flex-col md:flex-row gap-3">
               <button
-                className="flex-1 py-3 rounded-xl font-semibold text-sm"
+                className="w-full py-3 rounded-xl font-semibold text-sm"
                 style={{ background: '#4ade80', color: '#000' }}
                 onClick={sendAction}
               >
-                {method === 'email' ? '📧 Open in Mail' : '📋 Copy & Open Profile'}
+                {method === 'email' ? '📧 Open in Mail' : '📋 Copy &amp; Open Profile'}
               </button>
               <button
-                className="px-4 py-3 rounded-xl font-semibold text-sm"
+                className="w-full md:w-auto px-4 py-3 rounded-xl font-semibold text-sm"
                 style={{
                   background: marked ? '#16a34a' : 'rgba(74,222,128,0.1)',
                   color: '#4ade80',

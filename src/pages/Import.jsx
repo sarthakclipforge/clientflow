@@ -107,10 +107,10 @@ export default function Import() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto py-8 px-6">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-white mb-1">Import Leads</h1>
-        <p className="text-sm" style={{ color: '#6b6b6b' }}>Import from LeadScout PDF, CSV, or add manually</p>
+    <div className="max-w-2xl mx-auto py-6 px-4">
+      <div className="mb-6">
+        <h1 className="text-xl font-bold text-white mb-1">Import Leads</h1>
+        <p className="text-sm" style={{ color: '#6b6b6b' }}>From LeadScout PDF, CSV, or add manually</p>
       </div>
 
       {/* Tabs */}
@@ -133,8 +133,9 @@ export default function Import() {
       {/* PDF / CSV upload */}
       {(tab === 'PDF' || tab === 'CSV') && !preview && (
         <div>
+          {/* Desktop: drag zone */}
           <div
-            className="border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-colors"
+            className="hidden md:block border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-colors"
             style={{ borderColor: '#2a2a2a' }}
             onDragOver={e => e.preventDefault()}
             onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) { fileRef.current.files = e.dataTransfer.files; onFileSelect({ target: { files: e.dataTransfer.files } }) } }}
@@ -148,6 +149,20 @@ export default function Import() {
               {tab === 'PDF' ? 'Must be exported from LeadScout' : 'Columns: handle, subscribers, contact_info, fit_assessment'}
             </div>
           </div>
+          {/* Mobile: large tap button */}
+          <button
+            className="md:hidden w-full py-10 rounded-2xl border-2 border-dashed flex flex-col items-center gap-3"
+            style={{ borderColor: '#2a2a2a', background: '#0f0f0f' }}
+            onClick={() => fileRef.current?.click()}
+          >
+            <span className="text-4xl">{tab === 'PDF' ? '📄' : '📊'}</span>
+            <span className="text-sm font-semibold" style={{ color: '#888' }}>
+              {parsing ? 'Parsing…' : `Tap to pick ${tab} file`}
+            </span>
+            <span className="text-xs" style={{ color: '#444' }}>
+              {tab === 'PDF' ? 'Exported from LeadScout' : 'CSV with handle, subscribers, fit'}
+            </span>
+          </button>
           <input ref={fileRef} type="file" accept={tab === 'PDF' ? '.pdf' : '.csv,.txt'} className="hidden" onChange={onFileSelect} />
         </div>
       )}
@@ -163,8 +178,27 @@ export default function Import() {
             <button className="text-xs" style={{ color: '#555' }} onClick={() => setPreview(null)}>← Back</button>
           </div>
 
+          {/* Preview table — cards on mobile, table on desktop */}
           <div className="rounded-xl border overflow-hidden mb-5" style={{ borderColor: '#2a2a2a' }}>
-            <table className="w-full text-xs">
+            {/* Mobile cards */}
+            <div className="md:hidden divide-y" style={{ borderColor: '#111' }}>
+              {preview.leads.slice(0, 20).map((l, i) => (
+                <div key={i} className="flex items-center gap-3 px-4 py-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-mono font-medium truncate" style={{ color: '#c0c0c0' }}>{l.handle}</div>
+                    <div className="text-xs mt-0.5" style={{ color: '#555' }}>{l.subscribers} · {l.email || l.website || '—'}</div>
+                  </div>
+                  <span className="text-[10px] font-bold shrink-0" style={{ color: FIT_COLORS[l.fit_score] || '#888' }}>
+                    {(l.fit_score || '').replace(' FIT','')}
+                  </span>
+                </div>
+              ))}
+              {preview.leads.length > 20 && (
+                <div className="px-4 py-2 text-center text-xs" style={{ color: '#444' }}>+{preview.leads.length - 20} more…</div>
+              )}
+            </div>
+            {/* Desktop table */}
+            <table className="hidden md:table w-full text-xs">
               <thead>
                 <tr style={{ background: '#141414', color: '#555' }}>
                   {['Handle','Subscribers','Fit','Contact'].map(h => (
@@ -188,14 +222,17 @@ export default function Import() {
             </table>
           </div>
 
-          <button
-            className="px-6 py-2.5 rounded-lg font-semibold text-sm transition-all"
-            style={{ background: importing ? '#2a2a2a' : '#4ade80', color: importing ? '#555' : '#000' }}
-            onClick={confirmImport}
-            disabled={importing}
-          >
-            {importing ? 'Importing…' : `✓ Import ${preview.leads.length} Leads`}
-          </button>
+          {/* Sticky confirm button on mobile */}
+          <div className="sticky bottom-0 pb-2">
+            <button
+              className="w-full py-3 rounded-xl font-semibold text-sm transition-all"
+              style={{ background: importing ? '#2a2a2a' : '#4ade80', color: importing ? '#555' : '#000' }}
+              onClick={confirmImport}
+              disabled={importing}
+            >
+              {importing ? 'Importing…' : `✓ Import ${preview.leads.length} Leads`}
+            </button>
+          </div>
         </div>
       )}
 
