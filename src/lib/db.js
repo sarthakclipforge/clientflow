@@ -64,18 +64,24 @@ async function sbWrite(type, table, data, id = null) {
 }
 
 // ── Safe Supabase read helper ─────────────────────────────────
-// Returns { data, fromCache } — tries Supabase, falls back to cache
+// Merges Supabase response with locally-written records not yet synced.
+// This prevents locally-inserted leads from disappearing when Supabase
+// returns an older snapshot.
 async function sbRead(table, cacheKey, buildQuery) {
+  const cached = lsGet(cacheKey, [])
   if (isOnline()) {
     try {
       const { data, error } = await buildQuery(supabase.from(table))
       if (!error && data !== null) {
-        lsSet(cacheKey, data)   // refresh cache
-        return { data, fromCache: false }
+        // Keep any records that exist locally but aren't in Supabase yet
+        const sbIds = new Set(data.map(r => r.id))
+        const localOnly = cached.filter(r => r.id && !sbIds.has(r.id))
+        const merged = [...data, ...localOnly]
+        lsSet(cacheKey, merged)
+        return { data: merged, fromCache: false }
       }
     } catch {}
   }
-  const cached = lsGet(cacheKey, [])
   return { data: cached, fromCache: true }
 }
 
@@ -120,9 +126,23 @@ export const leadsDB = {
       // Update cache immediately for instant UI
       const cached = lsGet('cf_cache_leads', [])
       lsSet('cf_cache_leads', [...toInsert, ...cached])
-      // Write to Supabase (or queue)
+      // Write to Supabase — retry without batch_id if FK fails
       if (isOnline()) {
-        try { await supabase.from('leads').insert(toInsert) } catch { toInsert.forEach(r => enqueue({ type: 'insert', table: 'leads', data: r })) }
+        try {
+          const { error } = await supabase.from('leads').insert(toInsert)
+          if (error) {
+            // FK violation on batch_id? retry without it
+            if (error.code === '23503') {
+              const stripped = toInsert.map(({ batch_id, ...r }) => r)
+              const r2 = await supabase.from('leads').insert(stripped)
+              if (r2.error) toInsert.forEach(r => enqueue({ type: 'insert', table: 'leads', data: r }))
+            } else {
+              toInsert.forEach(r => enqueue({ type: 'insert', table: 'leads', data: r }))
+            }
+          }
+        } catch {
+          toInsert.forEach(r => enqueue({ type: 'insert', table: 'leads', data: r }))
+        }
       } else {
         toInsert.forEach(r => enqueue({ type: 'insert', table: 'leads', data: r }))
       }
